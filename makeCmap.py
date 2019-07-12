@@ -1,5 +1,6 @@
 import os
 import struct
+import binascii
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -9,7 +10,7 @@ PIXEL_SPACING = 0.75
 
 STRIP_LOC = [3, 8, 11, 14, 18, 20, 23, 26, 32, 35]
 
-PIXELS_PER_PACKET = 30
+PIXELS_PER_PACKET = 4
 
 def fractional_centers(locations, height, width, pixel_spacing):
     pixels_per_strip = float(width)/pixel_spacing
@@ -151,6 +152,7 @@ def image_to_packets(img_file, pixels_per=PIXELS_PER_PACKET, locations=STRIP_LOC
     image = plt.imread(img_file)
     fracs = fractional_centers(locations, height, width, pixel_spacing)
     image = bin_image(image, fracs)
+    print image.size/3
     image *= 255
     image = image.astype(int)
 
@@ -161,8 +163,10 @@ def image_to_packets(img_file, pixels_per=PIXELS_PER_PACKET, locations=STRIP_LOC
     for i, row in enumerate(image):
         for j, pixel in enumerate(row):
             if count == pixels_per:
-                chksum = ~sum([ord(char) for char in str(packet)])
-                packet.append(struct.pack('<i', chksum))
+                chksum_pack = ''.join(packet)
+                chksum = ~sum([ord(char) for char in chksum_pack])
+                packet.append(struct.pack('>h', chksum))
+                packet = [binascii.hexlify(char) for char in packet]
                 packets.append(''.join(packet))
 
                 count = 0
@@ -173,22 +177,26 @@ def image_to_packets(img_file, pixels_per=PIXELS_PER_PACKET, locations=STRIP_LOC
                 header = '!'
                 packet.append(struct.pack('c', header))
                 start = i*cols + j
-                packet.append(struct.pack('<H', start))
+                packet.append(struct.pack('>H', start))
                 end = i*cols + j + pixels_per
-                packet.append(struct.pack('<H', end))
+                packet.append(struct.pack('>H', end))
 
             for color in pixel:
                 packet.append(struct.pack('B', color))
             count += 1
+
+
 
     if count != pixels_per:
         for i in range(pixels_per - count):
             for j in range(3):
                 packet.append(struct.pack('B', 0))
 
-        chksum = ~sum([ord(char) for char in str(packet)])
-        packet.append(struct.pack('<i', chksum))
-        packets.append(''.join(packet))
+    chksum_pack = ''.join(packet)
+    chksum = ~sum([ord(char) for char in chksum_pack])
+    packet.append(struct.pack('>h', chksum))
+    packet = [binascii.hexlify(char) for char in packet]
+    packets.append(''.join(packet))
 
     return packets
 
