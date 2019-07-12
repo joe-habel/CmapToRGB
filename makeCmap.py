@@ -1,3 +1,5 @@
+import os
+import struct
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -6,6 +8,8 @@ FIG_WIDTH = 36
 PIXEL_SPACING = 0.75
 
 STRIP_LOC = [3, 8, 11, 14, 18, 20, 23, 26, 32, 35]
+
+PIXELS_PER_PACKET = 30
 
 def fractional_centers(locations, height, width, pixel_spacing):
     pixels_per_strip = float(width)/pixel_spacing
@@ -103,7 +107,10 @@ def create_test_gradient(size, direction='h', colors='rg'):
     return test_image.astype(int)
 
 def generate_arduino_map(downsampled, output_location='arduino/static_cmap/Colormap.h'):
-    start = '#ifndef Colormap\n#define Colormap\n'
+    basename = os.path.basename(output_location)
+    def_name, _  = os.path.splitext(basename)
+
+    start = '#ifndef %s\n#define %s\n'%def_name
     end = '#endif'
 
     pixels = downsampled.flatten()
@@ -119,16 +126,70 @@ def generate_arduino_map(downsampled, output_location='arduino/static_cmap/Color
         header.write(color_map)
         header.write(end)
 
-#test_image = create_test_gradient((512,512))
-test_image = plt.imread('jet.png')
+
+def image_to_arduino(img_file, arduino_loc='arduino/static_cmap/Colormap.h', save_downsamp=False, locations=STRIP_LOC, height=FIG_HEIGHT, width=FIG_WIDTH, pixel_spacing=PIXEL_SPACING):
+    image = plt.imread(img_file)
+    fracs = fractional_centers(locations, height, width, pixel_spacing)
+    image = bin_image(image, fracs)
+    if save_downsamp:
+        plt.imsave('downsampled_preview.png', image)
+    image *= 255
+    image = image.astype(int)
+    image = image.astype('S3')
+    generate_arduino_map(image, arduino_loc)
+
+def array_to_arduino(img, arduino_loc='arduino/static_cmap/Colormap.h', save_downsamp=False, locations=STRIP_LOC, height=FIG_HEIGHT, width=FIG_WIDTH, pixel_spacing=PIXEL_SPACING):
+    fracs = fractional_centers(locations, height, width, pixel_spacing)
+    image = bin_image(img, fracs)
+    if save_downsamp:
+        plt.imsave('downsampled_preview.png', image)
+    image = image.astype(int)
+    image = image.astype('S3')
+    generate_arduino_map(image, arduino_loc)
+
+def image_to_packets(img_file, pixels_per=PIXELS_PER_PACKET, locations=STRIP_LOC, height=FIG_HEIGHT, width=FIG_WIDTH, pixel_spacing=PIXEL_SPACING):
+    image = plt.imread(img_file)
+    fracs = fractional_centers(locations, height, width, pixel_spacing)
+    image = bin_image(image, fracs)
+    image *= 255
+    image = image.astype(int)
+
+    packets = []
+    packet = []
+    count = 0
+    rows, cols, depth = image.shape
+    for i, row in enumerate(image):
+        for j, pixel in enumerate(row):
+            if count == pixels_per:
+                chksum = ~sum([ord(char) for char in str(packet)])
+                packet.append(struct.pack('<i', chksum))
+                packets.append(''.join(packet))
+
+                count = 0
+                packet = []
 
 
-fracs = fractional_centers(STRIP_LOC, FIG_HEIGHT, FIG_WIDTH, PIXEL_SPACING)
-image = bin_image(test_image, fracs)
-plt.imsave('map.png', image)
-image *= 255
-image = image.astype(int)
-image = image.astype('S3')
-generate_arduino_map(image)
+            if len(packet) == 0:
+                header = '!'
+                packet.append(struct.pack('c', header))
+                start = i*cols + j
+                packet.append(struct.pack('<H', start))
+                end = i*cols + j + pixels_per
+                packet.append(struct.pack('<H', end))
+
+            for color in pixel:
+                packet.append(struct.pack('B', color))
+            count += 1
+
+    if count != pixels_per:
+        for i in range(pixels_per - count):
+            for j in range(3):
+                packet.append(struct.pack('B', 0))
+
+        chksum = ~sum([ord(char) for char in str(packet)])
+        packet.append(struct.pack('<i', chksum))
+        packets.append(''.join(packet))
+
+    return packets
 
 
